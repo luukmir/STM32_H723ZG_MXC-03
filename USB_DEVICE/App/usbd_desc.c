@@ -66,7 +66,7 @@
 #define USBD_LANGID_STRING     1033
 #define USBD_MANUFACTURER_STRING     "STMicroelectronics"
 #define USBD_PID_HS     22336
-#define USBD_PRODUCT_STRING_HS     "STM32 Audio Class"
+#define USBD_PRODUCT_STRING_HS     "MXC-03"
 #define USBD_CONFIGURATION_STRING_HS     "AUDIO Config"
 #define USBD_INTERFACE_STRING_HS     "AUDIO Interface"
 
@@ -150,9 +150,9 @@ __ALIGN_BEGIN uint8_t USBD_HS_DeviceDesc[USB_LEN_DEV_DESC] __ALIGN_END =
 {
   0x12,                       /*bLength */
   USB_DESC_TYPE_DEVICE,       /*bDescriptorType*/
-  0x00,                       /*bcdUSB */
+  0x10,                       /*bcdUSB */
 
-  0x02,
+  0x01,
   0x00,                       /*bDeviceClass*/
   0x00,                       /*bDeviceSubClass*/
   0x00,                       /*bDeviceProtocol*/
@@ -431,4 +431,3 @@ static void IntToUnicode(uint32_t value, uint8_t * pbuf, uint8_t len)
 /**
   * @}
   */
-

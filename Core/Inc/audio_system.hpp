@@ -95,8 +95,8 @@ struct Parameter {
   float32_t gainADCLeft{0.0f};
   float32_t gainADCRight{0.0f};
   float32_t gainMainUSB{0.5f};
-  float32_t gainFrontUSB{0.5f};
-  float32_t gainRearUSB{0.5f};
+  float32_t gainFrontUSB{0.3f};
+  float32_t gainRearUSB{0.3f};
   float32_t gainMaster{0.8f};
 };
 
