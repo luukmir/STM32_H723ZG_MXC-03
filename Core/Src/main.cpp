@@ -72,6 +72,8 @@ volatile uint32_t gFrontUsbLockAcquired{0};
 volatile uint32_t gF411ReadyWasAsserted{0};
 volatile uint32_t gFrontUsbFadeFrameIndex{0};
 volatile uint32_t gFrontUsbFadeActive{0};
+
+volatile uint32_t debug{0};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -274,6 +276,8 @@ int main(void)
       }
     }
     gF411ReadyWasAsserted = isReadyNow ? 1U : 0U;
+
+    debug = (int32_t)mainUSBRxBuffer.getAvailableFrames();
 
     UiInput::processLoop();
     /* USER CODE END WHILE */
@@ -599,6 +603,7 @@ void mainUSBRxBufferReset() { mainUSBRxBuffer.reset(); }
 void mainUSBRxBufferWrite(int16_t *data, uint32_t length) {
   mainUSBRxBuffer.write(data, length);
 }
+
 int32_t mainUSBRxBufferGetAvailableFrames(void) {
   return (int32_t)mainUSBRxBuffer.getAvailableFrames();
 }
