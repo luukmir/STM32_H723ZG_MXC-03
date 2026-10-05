@@ -126,6 +126,7 @@ static int8_t AUDIO_GetState_HS(void);
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_DECLARATION */
 extern void mainUSBRxBufferWrite(int16_t* data, uint32_t length);
 extern void mainUSBRxBufferReset();
+extern uint32_t g_debug_samples_in;
 /* USER CODE END PRIVATE_FUNCTIONS_DECLARATION */
 
 /**
@@ -154,6 +155,7 @@ USBD_AUDIO_ItfTypeDef USBD_AUDIO_fops_HS =
 static int8_t AUDIO_Init_HS(uint32_t AudioFreq, uint32_t Volume, uint32_t options)
 {
   /* USER CODE BEGIN 9 */
+  mainUSBRxBufferReset();
   UNUSED(AudioFreq);
   UNUSED(Volume);
   UNUSED(options);
@@ -189,6 +191,7 @@ static int8_t AUDIO_AudioCmd_HS(uint8_t* pbuf, uint32_t size, uint8_t cmd)
   switch(cmd)
   {
     case AUDIO_CMD_START:
+      mainUSBRxBufferReset();
     break;
 
     case AUDIO_CMD_PLAY:
@@ -240,6 +243,7 @@ static int8_t AUDIO_PeriodicTC_HS(uint8_t *pbuf, uint32_t size, uint8_t cmd)
 {
   /* USER CODE BEGIN 14 */
   mainUSBRxBufferWrite((int16_t*)pbuf, size / 2);
+  g_debug_samples_in += size / 2U;
 
   return (USBD_OK);
   /* USER CODE END 14 */

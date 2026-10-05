@@ -155,11 +155,8 @@ typedef struct {
   USBD_AUDIO_ControlTypeDef control;
 
   struct {
-    uint32_t fs;
     uint32_t fnsof;
-    uint16_t usbintn;
     uint8_t tx_flag;
-    int32_t ofs_packet;
   } iso_cont;
 } USBD_AUDIO_HandleTypeDef;
 

@@ -64,6 +64,7 @@ DMA_HandleTypeDef hdma_sai4_a;
 DMA_HandleTypeDef hdma_sai4_b;
 
 TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim4;
 
 /* USER CODE BEGIN PV */
 extern UART_HandleTypeDef hcom_uart[];
@@ -72,6 +73,10 @@ volatile uint32_t gFrontUsbLockAcquired{0};
 volatile uint32_t gF411ReadyWasAsserted{0};
 volatile uint32_t gFrontUsbFadeFrameIndex{0};
 volatile uint32_t gFrontUsbFadeActive{0};
+volatile uint32_t g_debug_samples_in = 0;
+volatile uint32_t g_debug_samples_out = 0;
+volatile uint32_t g_debug_dma_half_callbacks = 0;
+volatile uint32_t g_debug_dma_full_callbacks = 0;
 
 volatile uint32_t debug{0};
 /* USER CODE END PV */
@@ -86,6 +91,7 @@ static void MX_BDMA_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_SAI1_Init(void);
 static void MX_SAI4_Init(void);
+static void MX_TIM4_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -204,6 +210,7 @@ int main(void)
   MX_USB_DEVICE_Init();
   MX_SAI1_Init();
   MX_SAI4_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
   auto *pMonitorTx{reinterpret_cast<uint8_t *>(monitorTxBuffer.data())};
   auto *pADCRx{reinterpret_cast<uint8_t *>(ADCRxBuffer.data())};
@@ -229,6 +236,9 @@ int main(void)
   }
   if (HAL_SAI_Receive_DMA(&hsai_BlockA4, pADCRx, AudioConfig::DMABufferSize) !=
       HAL_OK) {
+    Error_Handler();
+  }
+  if (HAL_TIM_Base_Start(&htim4) != HAL_OK) {
     Error_Handler();
   }
   if (HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL) != HAL_OK) {
@@ -398,8 +408,8 @@ static void MX_SAI1_Init(void)
   hsai_BlockA1.Init.MonoStereoMode = SAI_STEREOMODE;
   hsai_BlockA1.Init.CompandingMode = SAI_NOCOMPANDING;
   hsai_BlockA1.Init.TriState = SAI_OUTPUT_NOTRELEASED;
-  if (HAL_SAI_InitProtocol(&hsai_BlockA1, SAI_I2S_STANDARD,
-                           SAI_PROTOCOL_DATASIZE_16BITEXTENDED, 2) != HAL_OK) {
+  if (HAL_SAI_InitProtocol(&hsai_BlockA1, SAI_I2S_STANDARD, SAI_PROTOCOL_DATASIZE_32BIT, 2) != HAL_OK)
+  {
     Error_Handler();
   }
   hsai_BlockB1.Instance = SAI1_Block_B;
@@ -410,8 +420,8 @@ static void MX_SAI1_Init(void)
   hsai_BlockB1.Init.MonoStereoMode = SAI_STEREOMODE;
   hsai_BlockB1.Init.CompandingMode = SAI_NOCOMPANDING;
   hsai_BlockB1.Init.TriState = SAI_OUTPUT_NOTRELEASED;
-  if (HAL_SAI_InitProtocol(&hsai_BlockB1, SAI_I2S_STANDARD,
-                           SAI_PROTOCOL_DATASIZE_16BITEXTENDED, 2) != HAL_OK) {
+  if (HAL_SAI_InitProtocol(&hsai_BlockB1, SAI_I2S_STANDARD, SAI_PROTOCOL_DATASIZE_32BIT, 2) != HAL_OK)
+  {
     Error_Handler();
   }
   /* USER CODE BEGIN SAI1_Init 2 */
@@ -442,11 +452,11 @@ static void MX_SAI4_Init(void)
   hsai_BlockA4.Init.NoDivider = SAI_MASTERDIVIDER_ENABLE;
   hsai_BlockA4.Init.FIFOThreshold = SAI_FIFOTHRESHOLD_EMPTY;
   hsai_BlockA4.Init.AudioFrequency = SAI_AUDIO_FREQUENCY_48K;
-  hsai_BlockA4.Init.SynchroExt = SAI_SYNCEXT_OUTBLOCKA_ENABLE;
+  hsai_BlockA4.Init.SynchroExt = SAI_SYNCEXT_DISABLE;
   hsai_BlockA4.Init.MonoStereoMode = SAI_STEREOMODE;
   hsai_BlockA4.Init.CompandingMode = SAI_NOCOMPANDING;
-  if (HAL_SAI_InitProtocol(&hsai_BlockA4, SAI_I2S_STANDARD,
-                           SAI_PROTOCOL_DATASIZE_32BIT, 2) != HAL_OK) {
+  if (HAL_SAI_InitProtocol(&hsai_BlockA4, SAI_I2S_STANDARD, SAI_PROTOCOL_DATASIZE_32BIT, 2) != HAL_OK)
+  {
     Error_Handler();
   }
   hsai_BlockB4.Instance = SAI4_Block_B;
@@ -454,12 +464,12 @@ static void MX_SAI4_Init(void)
   hsai_BlockB4.Init.Synchro = SAI_SYNCHRONOUS;
   hsai_BlockB4.Init.OutputDrive = SAI_OUTPUTDRIVE_DISABLE;
   hsai_BlockB4.Init.FIFOThreshold = SAI_FIFOTHRESHOLD_EMPTY;
-  hsai_BlockB4.Init.SynchroExt = SAI_SYNCEXT_OUTBLOCKA_ENABLE;
+  hsai_BlockB4.Init.SynchroExt = SAI_SYNCEXT_DISABLE;
   hsai_BlockB4.Init.MonoStereoMode = SAI_STEREOMODE;
   hsai_BlockB4.Init.CompandingMode = SAI_NOCOMPANDING;
   hsai_BlockB4.Init.TriState = SAI_OUTPUT_NOTRELEASED;
-  if (HAL_SAI_InitProtocol(&hsai_BlockB4, SAI_I2S_STANDARD,
-                           SAI_PROTOCOL_DATASIZE_32BIT, 2) != HAL_OK) {
+  if (HAL_SAI_InitProtocol(&hsai_BlockB4, SAI_I2S_STANDARD, SAI_PROTOCOL_DATASIZE_32BIT, 2) != HAL_OK)
+  {
     Error_Handler();
   }
   /* USER CODE BEGIN SAI4_Init 2 */
@@ -518,6 +528,63 @@ static void MX_TIM3_Init(void)
 }
 
 /**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_SlaveConfigTypeDef sSlaveConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_IC_InitTypeDef sICConfig = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 0;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 65535;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sSlaveConfig.SlaveMode = TIM_SLAVEMODE_EXTERNAL1;
+  sSlaveConfig.InputTrigger = TIM_TS_TI1FP1;
+  sSlaveConfig.TriggerPolarity = TIM_TRIGGERPOLARITY_RISING;
+  sSlaveConfig.TriggerFilter = 0;
+  if (HAL_TIM_SlaveConfigSynchro(&htim4, &sSlaveConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sICConfig.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
+  sICConfig.ICSelection = TIM_ICSELECTION_DIRECTTI;
+  sICConfig.ICPrescaler = TIM_ICPSC_DIV1;
+  sICConfig.ICFilter = 0;
+  if (HAL_TIM_IC_ConfigChannel(&htim4, &sICConfig, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
+
+}
+
+/**
   * Enable DMA controller clock
   */
 static void MX_BDMA_Init(void)
@@ -571,8 +638,8 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOF, GPIO_PIN_7, GPIO_PIN_RESET);
@@ -655,6 +722,7 @@ static void mixMainUSBAudio(uint32_t numFrames, uint32_t numSamples) {
 
   std::fill(usbTemp.begin(), usbTemp.end(), 0);
   mainUSBRxBuffer.read(usbTemp.data(), numSamples);
+  g_debug_samples_out += numSamples;
 
   for (uint32_t j = 0; j < numFrames; ++j) {
     float32_t usbLeft =
@@ -742,6 +810,7 @@ void HAL_SAI_RxHalfCpltCallback(SAI_HandleTypeDef *hsai) {
     analyzeFrontUsbBlock(0);
   }
   if (hsai == &hsai_BlockA4) {
+    ++g_debug_dma_half_callbacks;
     handleAudioBlock(0, AudioConfig::DMABufferSize / 2);
   }
 }
@@ -751,6 +820,7 @@ void HAL_SAI_RxCpltCallback(SAI_HandleTypeDef *hsai) {
     analyzeFrontUsbBlock(AudioConfig::DMABufferSize / 2);
   }
   if (hsai == &hsai_BlockA4) {
+    ++g_debug_dma_full_callbacks;
     handleAudioBlock(AudioConfig::DMABufferSize / 2,
                      AudioConfig::DMABufferSize);
   }

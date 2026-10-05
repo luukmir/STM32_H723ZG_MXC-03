@@ -74,7 +74,12 @@ EndBSPDependencies */
  * - Keeps all changes inside USER CODE sections so CubeMX regeneration is safe.
  */
 extern SAI_HandleTypeDef hsai_BlockB4;
+extern TIM_HandleTypeDef htim4;
 extern int32_t mainUSBRxBufferGetAvailableFrames(void);
+extern uint32_t g_debug_samples_in;
+extern uint32_t g_debug_samples_out;
+extern uint32_t g_debug_dma_half_callbacks;
+extern uint32_t g_debug_dma_full_callbacks;
 /* USER CODE END */
 
 /** @addtogroup STM32_USB_DEVICE_LIBRARY
@@ -152,6 +157,39 @@ static void *USBD_AUDIO_GetAudioHeaderDesc(uint8_t *pConfDesc);
 /** @defgroup USBD_AUDIO_Private_Variables
  * @{
  */
+
+#define FB_TARGET_FRAMES 512
+
+typedef struct {
+  uint16_t timer_diff;
+  uint32_t measure_elapsed_ms;
+  uint32_t raw_fb_q14;
+  int32_t buf_error;
+  int32_t trim_q14;
+  uint32_t final_fb_q14;
+  uint32_t measured_hz;
+  uint32_t pkt_cnt_192;
+  uint32_t pkt_cnt_196;
+  uint32_t pkt_cnt_188;
+  uint16_t last_pkt_size;
+} AudioFeedbackDebug_t;
+
+volatile AudioFeedbackDebug_t g_fb_debug;
+volatile uint32_t g_dbg_delta_in = 0;
+volatile uint32_t g_dbg_delta_out = 0;
+volatile uint32_t g_debug_window_elapsed_ms = 0;
+volatile uint32_t g_debug_window_timer_edges = 0;
+volatile uint32_t g_debug_window_input_samples = 0;
+volatile uint32_t g_debug_window_output_samples = 0;
+volatile uint32_t g_debug_window_output_frames = 0;
+volatile uint32_t g_debug_window_dma_half_callbacks = 0;
+volatile uint32_t g_debug_window_dma_full_callbacks = 0;
+volatile uint32_t g_debug_window_sof_callbacks = 0;
+volatile uint32_t g_debug_window_feedback_packets = 0;
+volatile uint32_t g_debug_window_packet_bytes = 0;
+volatile uint32_t g_debug_sof_callbacks = 0;
+volatile uint32_t g_debug_feedback_packets = 0;
+volatile uint32_t g_debug_packet_bytes = 0;
 
 USBD_ClassTypeDef USBD_AUDIO = {
     USBD_AUDIO_Init,
@@ -433,11 +471,8 @@ static uint8_t USBD_AUDIO_Init(USBD_HandleTypeDef *pdev, uint8_t cfgidx) {
 
   /* USER CODE BEGIN */
   /* User customization: initialize async feedback controller state. */
-  haudio->iso_cont.fs = USBD_AUDIO_FREQ;
   haudio->iso_cont.fnsof = 0U;
-  haudio->iso_cont.usbintn = 0U;
   haudio->iso_cont.tx_flag = 1U;
-  haudio->iso_cont.ofs_packet = 0;
   /* USER CODE END */
 
   /* Initialize the Audio output Hardware layer */
@@ -633,7 +668,12 @@ static uint8_t USBD_AUDIO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum) {
   /* USER CODE BEGIN */
   /* User customization: DataIn on feedback EP clears busy flag for next SOF packet. */
   USBD_AUDIO_HandleTypeDef *haudio;
-  haudio = (USBD_AUDIO_HandleTypeDef *)pdev->pClassData;
+
+  if (pdev->pClassDataCmsit[pdev->classId] == NULL) {
+    return (uint8_t)USBD_FAIL;
+  }
+
+  haudio = (USBD_AUDIO_HandleTypeDef *)pdev->pClassDataCmsit[pdev->classId];
 
   if (epnum == (AUDIOInEpAdd & 0xFU)) {
     haudio->iso_cont.tx_flag = 0U;
@@ -642,6 +682,133 @@ static uint8_t USBD_AUDIO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum) {
 
   /* Only OUT data are processed */
   return (uint8_t)USBD_OK;
+}
+
+static uint32_t Audio_MeasureHardwareFeedbackRate(void)
+{
+  static uint16_t last_cnt = 0U;
+  static uint32_t last_measure_time = 0U;
+  static uint32_t filtered_rate_q14 = (48U << 14);
+  static int32_t trim_q14_state = 0;
+  static uint8_t init_done = 0U;
+  const uint32_t measurement_window_ms = 32U;
+
+  const uint16_t current_cnt = (uint16_t)htim4.Instance->CNT;
+  const uint32_t current_time = HAL_GetTick();
+
+  if (init_done == 0U) {
+    last_cnt = current_cnt;
+    last_measure_time = current_time;
+    init_done = 1U;
+    return (48U << 14);
+  }
+
+  const uint16_t diff = (uint16_t)(current_cnt - last_cnt);
+  const uint32_t elapsed_ms = current_time - last_measure_time;
+
+  if (elapsed_ms >= measurement_window_ms) {
+    const uint32_t measured_rate_q14 =
+        ((uint32_t)diff << 14) / elapsed_ms;
+    filtered_rate_q14 =
+        ((filtered_rate_q14 * 31U) + measured_rate_q14) >> 5;
+    last_cnt = current_cnt;
+    last_measure_time = current_time;
+  }
+
+  const int32_t available_frames = mainUSBRxBufferGetAvailableFrames();
+  const int32_t buffer_error = available_frames - FB_TARGET_FRAMES;
+  int32_t trim_q14 = 0;
+
+  if (buffer_error < -32 || buffer_error > 32) {
+    trim_q14 = -(buffer_error * 24);
+    if (trim_q14 > 4096) {
+      trim_q14 = 4096;
+    } else if (trim_q14 < -4096) {
+      trim_q14 = -4096;
+    }
+  } else {
+    trim_q14 = -(buffer_error * 16) / 128;
+    if (trim_q14 > 16) {
+      trim_q14 = 16;
+    } else if (trim_q14 < -16) {
+      trim_q14 = -16;
+    }
+  }
+
+  trim_q14_state = (trim_q14_state * 7 + trim_q14) / 8;
+  trim_q14 = trim_q14_state;
+
+  const int32_t final_rate_q14 = (int32_t)filtered_rate_q14 + trim_q14;
+  g_fb_debug.timer_diff = diff;
+  g_fb_debug.measure_elapsed_ms = elapsed_ms;
+  g_fb_debug.raw_fb_q14 = filtered_rate_q14;
+  g_fb_debug.buf_error = buffer_error;
+  g_fb_debug.trim_q14 = trim_q14;
+  g_fb_debug.final_fb_q14 = (uint32_t)final_rate_q14;
+  g_fb_debug.measured_hz = (filtered_rate_q14 * 1000U) >> 14;
+
+  return (uint32_t)final_rate_q14;
+}
+
+void CheckRateDelta_1s(void)
+{
+  static uint32_t last_time = 0U;
+  static uint32_t last_in = 0U;
+  static uint32_t last_out = 0U;
+  static uint32_t last_dma_half = 0U;
+  static uint32_t last_dma_full = 0U;
+  static uint32_t last_sof = 0U;
+  static uint32_t last_feedback = 0U;
+  static uint32_t last_packet_bytes = 0U;
+  static uint16_t last_timer_count = 0U;
+  static uint8_t initialized = 0U;
+  const uint32_t now = HAL_GetTick();
+
+  ++g_debug_sof_callbacks;
+  if (initialized == 0U) {
+    last_time = now;
+    last_in = g_debug_samples_in;
+    last_out = g_debug_samples_out;
+    last_dma_half = g_debug_dma_half_callbacks;
+    last_dma_full = g_debug_dma_full_callbacks;
+    last_sof = g_debug_sof_callbacks;
+    last_feedback = g_debug_feedback_packets;
+    last_packet_bytes = g_debug_packet_bytes;
+    last_timer_count = (uint16_t)htim4.Instance->CNT;
+    initialized = 1U;
+    return;
+  }
+
+  if (now - last_time >= 1000U) {
+    const uint32_t elapsed_ms = now - last_time;
+    const uint16_t current_timer_count = (uint16_t)htim4.Instance->CNT;
+    g_debug_window_elapsed_ms = elapsed_ms;
+    g_debug_window_timer_edges =
+        (uint16_t)(current_timer_count - last_timer_count);
+    g_debug_window_input_samples = g_debug_samples_in - last_in;
+    g_debug_window_output_samples = g_debug_samples_out - last_out;
+    g_debug_window_output_frames = g_debug_window_output_samples / 2U;
+    g_debug_window_dma_half_callbacks =
+        g_debug_dma_half_callbacks - last_dma_half;
+    g_debug_window_dma_full_callbacks =
+        g_debug_dma_full_callbacks - last_dma_full;
+    g_debug_window_sof_callbacks = g_debug_sof_callbacks - last_sof;
+    g_debug_window_feedback_packets =
+        g_debug_feedback_packets - last_feedback;
+    g_debug_window_packet_bytes = g_debug_packet_bytes - last_packet_bytes;
+    g_dbg_delta_in = g_debug_window_input_samples;
+    g_dbg_delta_out = g_debug_window_output_samples;
+
+    last_time = now;
+    last_in = g_debug_samples_in;
+    last_out = g_debug_samples_out;
+    last_dma_half = g_debug_dma_half_callbacks;
+    last_dma_full = g_debug_dma_full_callbacks;
+    last_sof = g_debug_sof_callbacks;
+    last_feedback = g_debug_feedback_packets;
+    last_packet_bytes = g_debug_packet_bytes;
+    last_timer_count = current_timer_count;
+  }
 }
 
 /**
@@ -729,16 +896,17 @@ static uint8_t USBD_AUDIO_SOF(USBD_HandleTypeDef *pdev) {
       ep->DIEPCTL |= USB_OTG_DIEPCTL_SODDFRM;
     }
 
-    fb_data.rate = ((haudio->iso_cont.fs / 1000) << 14) |
-                   ((haudio->iso_cont.fs % 1000) << 4);
+    fb_data.rate = Audio_MeasureHardwareFeedbackRate();
 
     fb_data.fbbuf[3] = 0x00;
 
     if (USBD_LL_Transmit(pdev, AUDIOInEpAdd, (uint8_t *)fb_data.fbbuf, 3U) ==
         USBD_OK) {
       haudio->iso_cont.tx_flag = 1U;
+      ++g_debug_feedback_packets;
     }
   }
+  CheckRateDelta_1s();
   /* USER CODE END */
 
   return (uint8_t)USBD_OK;
@@ -882,26 +1050,19 @@ static uint8_t USBD_AUDIO_DataOut(USBD_HandleTypeDef *pdev, uint8_t epnum) {
     return (uint8_t)USBD_FAIL;
   }
 
-  if (epnum == AUDIOOutEpAdd) {
+  if (epnum == (AUDIOOutEpAdd & 0xFU)) {
     /* Get received data packet length */
     PacketSize = (uint16_t)USBD_LL_GetRxDataSize(pdev, epnum);
 
-    /* USER CODE BEGIN */
-    /*
-     * User customization: keep packet offset for async feedback phase control.
-     * If you change DMABufferSize in audio_system.hpp, update this macro accordingly.
-     */
-#ifndef SAI_BUF_SIZE
-#define SAI_BUF_SIZE 192U
-#endif
-
-    haudio->iso_cont.ofs_packet =
-        (haudio->iso_cont.ofs_packet + PacketSize) % SAI_BUF_SIZE;
-
-    if (haudio->iso_cont.ofs_packet >= AUDIO_TOTAL_BUF_SIZE) {
-      haudio->iso_cont.ofs_packet -= AUDIO_TOTAL_BUF_SIZE;
+    g_debug_packet_bytes += PacketSize;
+    g_fb_debug.last_pkt_size = PacketSize;
+    if (PacketSize == 192U) {
+      ++g_fb_debug.pkt_cnt_192;
+    } else if (PacketSize == 196U) {
+      ++g_fb_debug.pkt_cnt_196;
+    } else if (PacketSize == 188U) {
+      ++g_fb_debug.pkt_cnt_188;
     }
-    /* USER CODE END */
 
     /* Packet received Callback */
     ((USBD_AUDIO_ItfTypeDef *)pdev->pUserData[pdev->classId])
@@ -910,32 +1071,9 @@ static uint8_t USBD_AUDIO_DataOut(USBD_HandleTypeDef *pdev, uint8_t epnum) {
     /* Increment the Buffer pointer or roll it back when all buffers are full */
     haudio->wr_ptr += PacketSize;
 
-    /* USER CODE BEGIN */
-    /*
-     * User customization: derive adaptive feedback frequency from ring-buffer
-     * fill level (simple proportional correction, clamped to +/-200 Hz).
-     */
-    haudio->iso_cont.usbintn++;
-
-    if ((haudio->iso_cont.usbintn % 4) == 0) {
-      int32_t available_frames = mainUSBRxBufferGetAvailableFrames();
-      int32_t target_frames = 512;
-      int32_t frame_diff = available_frames - target_frames;
-
-      haudio->iso_cont.fs = USBD_AUDIO_FREQ - frame_diff;
-
-      if (haudio->iso_cont.fs > (USBD_AUDIO_FREQ + 200))
-        haudio->iso_cont.fs = USBD_AUDIO_FREQ + 200;
-      if (haudio->iso_cont.fs < (USBD_AUDIO_FREQ - 200))
-        haudio->iso_cont.fs = USBD_AUDIO_FREQ - 200;
-    }
-
     if ((haudio->wr_ptr + AUDIO_OUT_PACKET) > AUDIO_TOTAL_BUF_SIZE) {
       /* All buffers are full: roll back */
       haudio->wr_ptr = 0U;
-
-      haudio->iso_cont.usbintn = 0;
-      /* USER CODE END */
 
       if (haudio->offset == AUDIO_OFFSET_UNKNOWN) {
         ((USBD_AUDIO_ItfTypeDef *)pdev->pUserData[pdev->classId])
@@ -943,10 +1081,7 @@ static uint8_t USBD_AUDIO_DataOut(USBD_HandleTypeDef *pdev, uint8_t epnum) {
                        AUDIO_CMD_START);
         haudio->offset = AUDIO_OFFSET_NONE;
 
-        /* USER CODE BEGIN */
-        /* User customization: trigger first feedback packet after stream start. */
         haudio->iso_cont.tx_flag = 0U;
-        /* USER CODE END */
       }
     }
 
