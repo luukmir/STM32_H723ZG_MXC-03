@@ -408,8 +408,8 @@ static void MX_SAI1_Init(void)
   hsai_BlockA1.Init.MonoStereoMode = SAI_STEREOMODE;
   hsai_BlockA1.Init.CompandingMode = SAI_NOCOMPANDING;
   hsai_BlockA1.Init.TriState = SAI_OUTPUT_NOTRELEASED;
-  if (HAL_SAI_InitProtocol(&hsai_BlockA1, SAI_I2S_STANDARD, SAI_PROTOCOL_DATASIZE_32BIT, 2) != HAL_OK)
-  {
+  if (HAL_SAI_InitProtocol(&hsai_BlockA1, SAI_I2S_STANDARD,
+                           SAI_PROTOCOL_DATASIZE_16BITEXTENDED, 2) != HAL_OK) {
     Error_Handler();
   }
   hsai_BlockB1.Instance = SAI1_Block_B;
@@ -420,8 +420,8 @@ static void MX_SAI1_Init(void)
   hsai_BlockB1.Init.MonoStereoMode = SAI_STEREOMODE;
   hsai_BlockB1.Init.CompandingMode = SAI_NOCOMPANDING;
   hsai_BlockB1.Init.TriState = SAI_OUTPUT_NOTRELEASED;
-  if (HAL_SAI_InitProtocol(&hsai_BlockB1, SAI_I2S_STANDARD, SAI_PROTOCOL_DATASIZE_32BIT, 2) != HAL_OK)
-  {
+  if (HAL_SAI_InitProtocol(&hsai_BlockB1, SAI_I2S_STANDARD,
+                           SAI_PROTOCOL_DATASIZE_16BITEXTENDED, 2) != HAL_OK) {
     Error_Handler();
   }
   /* USER CODE BEGIN SAI1_Init 2 */
@@ -452,11 +452,11 @@ static void MX_SAI4_Init(void)
   hsai_BlockA4.Init.NoDivider = SAI_MASTERDIVIDER_ENABLE;
   hsai_BlockA4.Init.FIFOThreshold = SAI_FIFOTHRESHOLD_EMPTY;
   hsai_BlockA4.Init.AudioFrequency = SAI_AUDIO_FREQUENCY_48K;
-  hsai_BlockA4.Init.SynchroExt = SAI_SYNCEXT_DISABLE;
+  hsai_BlockA4.Init.SynchroExt = SAI_SYNCEXT_OUTBLOCKA_ENABLE;
   hsai_BlockA4.Init.MonoStereoMode = SAI_STEREOMODE;
   hsai_BlockA4.Init.CompandingMode = SAI_NOCOMPANDING;
-  if (HAL_SAI_InitProtocol(&hsai_BlockA4, SAI_I2S_STANDARD, SAI_PROTOCOL_DATASIZE_32BIT, 2) != HAL_OK)
-  {
+  if (HAL_SAI_InitProtocol(&hsai_BlockA4, SAI_I2S_STANDARD,
+                           SAI_PROTOCOL_DATASIZE_32BIT, 2) != HAL_OK) {
     Error_Handler();
   }
   hsai_BlockB4.Instance = SAI4_Block_B;
@@ -464,12 +464,12 @@ static void MX_SAI4_Init(void)
   hsai_BlockB4.Init.Synchro = SAI_SYNCHRONOUS;
   hsai_BlockB4.Init.OutputDrive = SAI_OUTPUTDRIVE_DISABLE;
   hsai_BlockB4.Init.FIFOThreshold = SAI_FIFOTHRESHOLD_EMPTY;
-  hsai_BlockB4.Init.SynchroExt = SAI_SYNCEXT_DISABLE;
+  hsai_BlockB4.Init.SynchroExt = SAI_SYNCEXT_OUTBLOCKA_ENABLE;
   hsai_BlockB4.Init.MonoStereoMode = SAI_STEREOMODE;
   hsai_BlockB4.Init.CompandingMode = SAI_NOCOMPANDING;
   hsai_BlockB4.Init.TriState = SAI_OUTPUT_NOTRELEASED;
-  if (HAL_SAI_InitProtocol(&hsai_BlockB4, SAI_I2S_STANDARD, SAI_PROTOCOL_DATASIZE_32BIT, 2) != HAL_OK)
-  {
+  if (HAL_SAI_InitProtocol(&hsai_BlockB4, SAI_I2S_STANDARD,
+                           SAI_PROTOCOL_DATASIZE_32BIT, 2) != HAL_OK) {
     Error_Handler();
   }
   /* USER CODE BEGIN SAI4_Init 2 */

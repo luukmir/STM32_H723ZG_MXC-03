@@ -687,34 +687,45 @@ static uint8_t USBD_AUDIO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum) {
 static uint32_t Audio_MeasureHardwareFeedbackRate(void)
 {
   static uint16_t last_cnt = 0U;
-  static uint32_t last_measure_time = 0U;
+  static uint32_t sof_window_cnt = 0U;
   static uint32_t filtered_rate_q14 = (48U << 14);
   static int32_t trim_q14_state = 0;
   static uint8_t init_done = 0U;
-  const uint32_t measurement_window_ms = 32U;
+  const uint32_t measurement_window_sofs = 32U; // 32 SOF = 32 ms
 
   const uint16_t current_cnt = (uint16_t)htim4.Instance->CNT;
-  const uint32_t current_time = HAL_GetTick();
 
   if (init_done == 0U) {
     last_cnt = current_cnt;
-    last_measure_time = current_time;
+    sof_window_cnt = 0U;
     init_done = 1U;
     return (48U << 14);
   }
 
-  const uint16_t diff = (uint16_t)(current_cnt - last_cnt);
-  const uint32_t elapsed_ms = current_time - last_measure_time;
+  sof_window_cnt++;
 
-  if (elapsed_ms >= measurement_window_ms) {
+  // 32 SOF (32 ms) ごとに Q14 レートを算出・更新
+  if (sof_window_cnt >= measurement_window_sofs) {
+    const uint16_t diff = (uint16_t)(current_cnt - last_cnt);
+
+    // 1msあたりのカウント数 = diff / 32
+    // UAC1.0の10.14形式: ((uint32_t)diff << 14) / 32
     const uint32_t measured_rate_q14 =
-        ((uint32_t)diff << 14) / elapsed_ms;
+        ((uint32_t)diff << 14) / measurement_window_sofs;
+
     filtered_rate_q14 =
         ((filtered_rate_q14 * 31U) + measured_rate_q14) >> 5;
+
+    g_fb_debug.timer_diff = diff;
+    g_fb_debug.measure_elapsed_ms = sof_window_cnt; // SOF回数 = 経過ms
+    g_fb_debug.raw_fb_q14 = filtered_rate_q14;
+    g_fb_debug.measured_hz = (filtered_rate_q14 * 1000U) >> 14;
+
     last_cnt = current_cnt;
-    last_measure_time = current_time;
+    sof_window_cnt = 0U;
   }
 
+  /* --- バッファ残量による微小トリム --- */
   const int32_t available_frames = mainUSBRxBufferGetAvailableFrames();
   const int32_t buffer_error = available_frames - FB_TARGET_FRAMES;
   int32_t trim_q14 = 0;
@@ -739,20 +750,16 @@ static uint32_t Audio_MeasureHardwareFeedbackRate(void)
   trim_q14 = trim_q14_state;
 
   const int32_t final_rate_q14 = (int32_t)filtered_rate_q14 + trim_q14;
-  g_fb_debug.timer_diff = diff;
-  g_fb_debug.measure_elapsed_ms = elapsed_ms;
-  g_fb_debug.raw_fb_q14 = filtered_rate_q14;
   g_fb_debug.buf_error = buffer_error;
   g_fb_debug.trim_q14 = trim_q14;
   g_fb_debug.final_fb_q14 = (uint32_t)final_rate_q14;
-  g_fb_debug.measured_hz = (filtered_rate_q14 * 1000U) >> 14;
 
   return (uint32_t)final_rate_q14;
 }
 
 void CheckRateDelta_1s(void)
 {
-  static uint32_t last_time = 0U;
+  static uint32_t sof_tick = 0U;
   static uint32_t last_in = 0U;
   static uint32_t last_out = 0U;
   static uint32_t last_dma_half = 0U;
@@ -762,11 +769,11 @@ void CheckRateDelta_1s(void)
   static uint32_t last_packet_bytes = 0U;
   static uint16_t last_timer_count = 0U;
   static uint8_t initialized = 0U;
-  const uint32_t now = HAL_GetTick();
 
   ++g_debug_sof_callbacks;
+  ++sof_tick;
+
   if (initialized == 0U) {
-    last_time = now;
     last_in = g_debug_samples_in;
     last_out = g_debug_samples_out;
     last_dma_half = g_debug_dma_half_callbacks;
@@ -776,13 +783,14 @@ void CheckRateDelta_1s(void)
     last_packet_bytes = g_debug_packet_bytes;
     last_timer_count = (uint16_t)htim4.Instance->CNT;
     initialized = 1U;
+    sof_tick = 0U;
     return;
   }
 
-  if (now - last_time >= 1000U) {
-    const uint32_t elapsed_ms = now - last_time;
+  // ホストPCから来る正確な 1000 SOF (= 1.000秒) ごとに集計
+  if (sof_tick >= 1000U) {
     const uint16_t current_timer_count = (uint16_t)htim4.Instance->CNT;
-    g_debug_window_elapsed_ms = elapsed_ms;
+    g_debug_window_elapsed_ms = sof_tick; // 正確に 1000 ms
     g_debug_window_timer_edges =
         (uint16_t)(current_timer_count - last_timer_count);
     g_debug_window_input_samples = g_debug_samples_in - last_in;
@@ -799,7 +807,7 @@ void CheckRateDelta_1s(void)
     g_dbg_delta_in = g_debug_window_input_samples;
     g_dbg_delta_out = g_debug_window_output_samples;
 
-    last_time = now;
+    sof_tick = 0U;
     last_in = g_debug_samples_in;
     last_out = g_debug_samples_out;
     last_dma_half = g_debug_dma_half_callbacks;
@@ -857,12 +865,6 @@ static uint8_t USBD_AUDIO_EP0_TxReady(USBD_HandleTypeDef *pdev) {
  * @retval status
  */
 static uint8_t USBD_AUDIO_SOF(USBD_HandleTypeDef *pdev) {
-  /* USER CODE BEGIN */
-  /*
-   * User customization: asynchronous feedback producer.
-   * Sends 10.14 fixed-point feedback on EP IN every SOF when endpoint is idle.
-   * Also aligns transmission to odd/even USB frame for robust HS scheduling.
-   */
   USBD_AUDIO_HandleTypeDef *haudio;
   haudio = (USBD_AUDIO_HandleTypeDef *)pdev->pClassDataCmsit[pdev->classId];
 
@@ -881,6 +883,10 @@ static uint8_t USBD_AUDIO_SOF(USBD_HandleTypeDef *pdev) {
   ((USB_OTG_DeviceTypeDef *)((uint32_t)USB_OTG_HS + USB_OTG_DEVICE_BASE))
 #endif
 
+  // ★重要: エンドポイントの送信ビジー状態に関わらず、毎SOFで測定・集計を実行
+  uint32_t current_fb_rate = Audio_MeasureHardwareFeedbackRate();
+  CheckRateDelta_1s();
+
   if (haudio->iso_cont.tx_flag == 0U) {
     uint32_t frame_number = (USB_OTG_HS_DEVICE->DSTS & USB_OTG_DSTS_FNSOF) >> 8;
 
@@ -896,8 +902,7 @@ static uint8_t USBD_AUDIO_SOF(USBD_HandleTypeDef *pdev) {
       ep->DIEPCTL |= USB_OTG_DIEPCTL_SODDFRM;
     }
 
-    fb_data.rate = Audio_MeasureHardwareFeedbackRate();
-
+    fb_data.rate = current_fb_rate;
     fb_data.fbbuf[3] = 0x00;
 
     if (USBD_LL_Transmit(pdev, AUDIOInEpAdd, (uint8_t *)fb_data.fbbuf, 3U) ==
@@ -906,8 +911,6 @@ static uint8_t USBD_AUDIO_SOF(USBD_HandleTypeDef *pdev) {
       ++g_debug_feedback_packets;
     }
   }
-  CheckRateDelta_1s();
-  /* USER CODE END */
 
   return (uint8_t)USBD_OK;
 }

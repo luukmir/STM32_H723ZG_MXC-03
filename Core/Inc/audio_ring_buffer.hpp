@@ -61,6 +61,7 @@ public:
         pRead_.store(current_read + length, std::memory_order_release);
       } else {
         std::memset(output, 0, length * sizeof(T));
+        pRead_.store(current_write, std::memory_order_release);
         isReady_ = false;
       }
     } else {

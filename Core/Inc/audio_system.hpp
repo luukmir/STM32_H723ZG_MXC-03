@@ -94,9 +94,9 @@ extern std::array<float32_t, AudioConfig::FramesPerBlock> chRight;
 struct Parameter {
   float32_t gainADCLeft{1.0f};
   float32_t gainADCRight{0.0f};
-  float32_t gainMainUSB{0.5f};
-  float32_t gainFrontUSB{0.3f};
-  float32_t gainRearUSB{0.3f};
+  float32_t gainMainUSB{0.8f};
+  float32_t gainFrontUSB{0.8f};
+  float32_t gainRearUSB{0.8f};
   float32_t gainMaster{1.0f};
 };
 
