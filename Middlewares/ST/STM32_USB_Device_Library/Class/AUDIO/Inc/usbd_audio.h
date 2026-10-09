@@ -45,7 +45,7 @@ extern "C" {
 #endif /* USBD_AUDIO_FREQ */
 
 #ifndef USBD_MAX_NUM_INTERFACES
-#define USBD_MAX_NUM_INTERFACES 1U
+#define USBD_MAX_NUM_INTERFACES 3U
 #endif /* USBD_AUDIO_FREQ */
 
 #ifndef AUDIO_HS_BINTERVAL
@@ -62,9 +62,13 @@ extern "C" {
 
 #ifndef AUDIO_IN_EP
 #define AUDIO_IN_EP 0x81U
-#endif /* AUDIO_OUT_EP */
+#endif /* AUDIO_IN_EP */
 
-#define USB_AUDIO_CONFIG_DESC_SIZ (0x6DU + 0x09)
+#ifndef AUDIO_IN_REC_EP
+#define AUDIO_IN_REC_EP 0x82U
+#endif /* AUDIO_IN_REC_EP */
+
+#define USB_AUDIO_CONFIG_DESC_SIZ 0xC1U
 #define AUDIO_INTERFACE_DESC_SIZE 0x09U
 #define USB_AUDIO_DESC_SIZ 0x09U
 #define AUDIO_STANDARD_ENDPOINT_DESC_SIZE 0x09U
@@ -109,6 +113,8 @@ extern "C" {
 
 #define AUDIO_OUT_PACKET (uint16_t)(((USBD_AUDIO_FREQ * 2U * 2U) / 1000U) + 4)
 #define AUDIO_IN_PACKET 0x03U
+#define AUDIO_IN_PACKET_SIZE (uint16_t)((USBD_AUDIO_FREQ * 2U * 2U) / 1000U)
+#define AUDIO_IN_BUF_SIZE (AUDIO_IN_PACKET_SIZE * 64U)
 #define AUDIO_DEFAULT_VOLUME 70U
 
 /* Number of sub-packets in the audio transfer buffer. You can modify this value
@@ -147,6 +153,7 @@ typedef struct {
 
 typedef struct {
   uint32_t alt_setting;
+  uint32_t alt_setting_in;
   uint8_t buffer[AUDIO_TOTAL_BUF_SIZE];
   AUDIO_OffsetTypeDef offset;
   uint8_t rd_enable;
@@ -158,6 +165,12 @@ typedef struct {
     uint32_t fnsof;
     uint8_t tx_flag;
   } iso_cont;
+
+  /* Record (IN) audio buffer & state */
+  uint8_t tx_buffer[AUDIO_IN_BUF_SIZE];
+  uint16_t tx_wr_ptr;
+  uint16_t tx_rd_ptr;
+  uint8_t tx_busy;
 } USBD_AUDIO_HandleTypeDef;
 
 typedef struct {
@@ -299,6 +312,8 @@ uint8_t USBD_AUDIO_RegisterInterface(USBD_HandleTypeDef *pdev,
                                      USBD_AUDIO_ItfTypeDef *fops);
 
 void USBD_AUDIO_Sync(USBD_HandleTypeDef *pdev, AUDIO_OffsetTypeDef offset);
+void mainUSBTxBufferWrite(const int16_t *pData, uint32_t numSamples);
+void mainUSBTxBufferReset(void);
 
 #ifdef USE_USBD_COMPOSITE
 uint32_t USBD_AUDIO_GetEpPcktSze(USBD_HandleTypeDef *pdev, uint8_t If,

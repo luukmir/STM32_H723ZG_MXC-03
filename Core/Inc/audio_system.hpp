@@ -24,6 +24,8 @@ namespace Convert {
 constexpr float32_t Int16ToFloat{1.0f / 32768.0f};
 /** @brief Convert int32 PCM sample to float in [-1.0, 1.0). */
 constexpr float32_t Int32ToFloat{1.0f / 2147483648.0f};
+/** @brief Convert float in [-1.0, 1.0) to int16 PCM scale. */
+constexpr float32_t FloatToInt16{32767.0f};
 /** @brief Convert float in [-1.0, 1.0) to int32 PCM scale. */
 constexpr float32_t FloatToInt32{2147483647.0f};
 } // namespace Convert

@@ -126,6 +126,7 @@ static int8_t AUDIO_GetState_HS(void);
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_DECLARATION */
 extern void mainUSBRxBufferWrite(int16_t* data, uint32_t length);
 extern void mainUSBRxBufferReset();
+extern void mainUSBTxBufferReset(void);
 extern uint32_t g_debug_samples_in;
 /* USER CODE END PRIVATE_FUNCTIONS_DECLARATION */
 
@@ -156,6 +157,7 @@ static int8_t AUDIO_Init_HS(uint32_t AudioFreq, uint32_t Volume, uint32_t option
 {
   /* USER CODE BEGIN 9 */
   mainUSBRxBufferReset();
+  mainUSBTxBufferReset();
   UNUSED(AudioFreq);
   UNUSED(Volume);
   UNUSED(options);
@@ -172,6 +174,7 @@ static int8_t AUDIO_DeInit_HS(uint32_t options)
 {
   /* USER CODE BEGIN 10 */
   mainUSBRxBufferReset();
+  mainUSBTxBufferReset();
 
   UNUSED(options);
   return (USBD_OK);
@@ -192,13 +195,15 @@ static int8_t AUDIO_AudioCmd_HS(uint8_t* pbuf, uint32_t size, uint8_t cmd)
   {
     case AUDIO_CMD_START:
       mainUSBRxBufferReset();
+      mainUSBTxBufferReset();
     break;
 
     case AUDIO_CMD_PLAY:
     break;
 
     case AUDIO_CMD_STOP:
-	    mainUSBRxBufferReset();
+      mainUSBRxBufferReset();
+      mainUSBTxBufferReset();
     break;
   }
   UNUSED(pbuf);

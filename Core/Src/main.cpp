@@ -26,6 +26,7 @@
 #include "effects_chain.hpp"
 #include "ui_controller.hpp"
 #include "ui_input_manager.hpp"
+#include "usbd_audio.h"
 
 /* USER CODE END Includes */
 
@@ -369,13 +370,13 @@ void PeriphCommonClock_Config(void)
   PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_SAI4A|RCC_PERIPHCLK_SAI4B
                               |RCC_PERIPHCLK_SAI1;
   PeriphClkInitStruct.PLL3.PLL3M = 5;
-  PeriphClkInitStruct.PLL3.PLL3N = 192;
+  PeriphClkInitStruct.PLL3.PLL3N = 190;
   PeriphClkInitStruct.PLL3.PLL3P = 25;
   PeriphClkInitStruct.PLL3.PLL3Q = 2;
   PeriphClkInitStruct.PLL3.PLL3R = 2;
   PeriphClkInitStruct.PLL3.PLL3RGE = RCC_PLL3VCIRANGE_0;
   PeriphClkInitStruct.PLL3.PLL3VCOSEL = RCC_PLL3VCOMEDIUM;
-  PeriphClkInitStruct.PLL3.PLL3FRACN = 0;
+  PeriphClkInitStruct.PLL3.PLL3FRACN = 3385;
   PeriphClkInitStruct.Sai1ClockSelection = RCC_SAI1CLKSOURCE_PLL3;
   PeriphClkInitStruct.Sai4AClockSelection = RCC_SAI4ACLKSOURCE_PLL3;
   PeriphClkInitStruct.Sai4BClockSelection = RCC_SAI4BCLKSOURCE_PLL3;
@@ -675,6 +676,26 @@ int32_t mainUSBRxBufferGetAvailableFrames(void) {
   return (int32_t)mainUSBRxBuffer.getAvailableFrames();
 }
 
+uint32_t mainUSBTxBufferReadBlock(int16_t *dest, uint32_t samples_to_read) {
+	// 1フレーム = 2サンプル(Stereo) なので、必要なフレーム数は samples_to_read / 2
+	uint32_t frames_to_read = samples_to_read / 2U;
+
+	if (mainUSBTxBuffer.getAvailableFrames() < frames_to_read) {
+		return 0U; // アンダーラン
+	}
+
+	// ブロック読み出し: read(T* dest, size_t count)
+	// ※引数が「サンプル数」指定なら samples_to_read、「フレーム数」指定なら frames_to_read を渡してください
+	// 一般的な AudioRingBuffer 実装に合わせて samples_to_read を渡す例:
+	mainUSBTxBuffer.read(dest, samples_to_read);
+	return samples_to_read;
+}
+
+uint32_t mainUSBTxBufferGetCount(void) {
+	// 利用可能なサンプル数を返す (フレーム数 * 2)
+	return static_cast<uint32_t>(mainUSBTxBuffer.getAvailableFrames() * 2U);
+}
+
 static void processADCMonoLeftChannelInput(uint32_t start,
                                                   uint32_t numFrames) {
   for (uint32_t i = start, j = 0; j < numFrames; ++j, i += 2) {
@@ -792,6 +813,25 @@ static void processOutput(uint32_t start, uint32_t numFrames) {
   }
 }
 
+static void sendProcessedADCToUsbRecord(uint32_t numFrames) {
+  // 1ブロック分のステレオサンプル一時バッファ (numFrames * 2 サンプル)
+  static std::array<int16_t, AudioConfig::FramesPerBlock * 2> recordTemp;
+
+  for (uint32_t j = 0; j < numFrames; ++j) {
+    int32_t leftInt = __SSAT(
+        static_cast<int32_t>(Mixer::chLeft[j] * Audio::Convert::FloatToInt16), 16);
+    int32_t rightInt = __SSAT(
+        static_cast<int32_t>(Mixer::chRight[j] * Audio::Convert::FloatToInt16), 16);
+
+    recordTemp[j * 2]     = static_cast<int16_t>(leftInt);
+    recordTemp[j * 2 + 1] = static_cast<int16_t>(rightInt);
+  }
+
+  // ブロック書き込み: write(const T* src, size_t count)
+  // numFrames * 2 サンプルを一括で投入
+  mainUSBTxBuffer.write(recordTemp.data(), numFrames * 2U);
+}
+
 static void handleAudioBlock(uint32_t start, uint32_t end) {
   const uint32_t numSamples{end - start};
   const uint32_t numFrames{numSamples / 2};
@@ -799,6 +839,7 @@ static void handleAudioBlock(uint32_t start, uint32_t end) {
   processADCMonoLeftChannelInput(start, numFrames);
   processADCMonoRightChannelInput(start, numFrames);
   processFX(numFrames);
+  sendProcessedADCToUsbRecord(numFrames);
   mixMainUSBAudio(numFrames, numSamples);
   mixFrontUSBAudio(start, numFrames);
   mixRearUSBAudio(start, numFrames);
